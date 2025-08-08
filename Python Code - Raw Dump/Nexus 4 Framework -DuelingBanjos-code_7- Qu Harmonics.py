@@ -1,0 +1,148 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Stream generators
+def generate_random_walk(N=1000, seed=0):
+    np.random.seed(seed)
+    return np.cumsum(np.random.randn(N))
+
+def generate_sinusoid(N=1000, freq=5, amplitude=1.0, phase=0.0):
+    t = np.linspace(0, 2 * np.pi, N)
+    return amplitude * np.sin(freq * t + phase)
+
+def generate_bursty(N=1000, p_burst=0.05, burst_scale=5.0, noise_scale=0.2, seed=42):
+    np.random.seed(seed)
+    deltas = []
+    for _ in range(N):
+        if np.random.rand() < p_burst:
+            deltas.append(np.random.randn() * burst_scale)
+        else:
+            deltas.append(np.random.randn() * noise_scale)
+    return np.cumsum(deltas)
+
+# Compression function (novelty + motif, fixed eps=1.0, bias=True)
+def novelty_motif_compression(stream, base_eps, min_len, max_len, k=0.35, window_vol=10):
+    deltas = np.diff(stream)
+    N_main = len(deltas)
+    journal = [d for d in deltas if abs(d) > base_eps]
+    
+    motif_dict = {}
+    next_id = 0
+    tokens = []
+    storage_tokens = 0
+    checkpoints = 0
+    pos = 0
+
+    while pos < len(journal):
+        matched = False
+        for L in range(max_len, min_len-1, -1):
+            if pos + L <= len(journal):
+                seq = tuple(journal[pos:pos+L])
+                if seq in motif_dict:
+                    tokens.append(('M', motif_dict[seq]))
+                    storage_tokens += 1
+                    pos += L
+                    matched = True
+                    break
+        if matched:
+            continue
+
+        tokens.append(('D', journal[pos]))
+        storage_tokens += 1
+
+        candidates = [tuple(journal[pos:pos+L])
+                      for L in range(min_len, max_len+1)
+                      if pos+L <= len(journal)]
+        if candidates:
+            best = min(candidates, key=lambda s: abs(np.mean(s) - k))
+            if best not in motif_dict:
+                motif_dict[best] = next_id
+                next_id += 1
+                checkpoints += 1
+        pos += 1
+    
+    total_storage_ratio = (storage_tokens + checkpoints) / N_main
+
+    # Reconstruction
+    reconstructed = np.zeros(len(stream))
+    idx = 1
+    inv_motifs = {v: k for k, v in motif_dict.items()}
+    for typ, val in tokens:
+        if typ == 'M':
+            for d in inv_motifs[val]:
+                reconstructed[idx] = reconstructed[idx-1] + d
+                idx += 1
+        else:
+            reconstructed[idx] = reconstructed[idx-1] + val
+            idx += 1
+
+    rmse = np.sqrt(np.mean((reconstructed - stream)**2))
+    return total_storage_ratio, rmse
+
+# Collect frontier points for each stream
+streams = {
+    'random': generate_random_walk(),
+    'sinusoid': generate_sinusoid(),
+    'bursty': generate_bursty()
+}
+
+motif_lengths = list(range(2, 9))
+frontiers = {}
+
+for name, stream in streams.items():
+    pts = []
+    for min_len in motif_lengths:
+        max_len = min_len + 3
+        sr, rmse = novelty_motif_compression(stream, base_eps=1.0, min_len=min_len, max_len=max_len)
+        pts.append((sr, rmse))
+    frontiers[name] = np.array(pts)
+
+# Fit power-law+offset: y ≈ A x^B + C
+coeffs = {}
+for name, data in frontiers.items():
+    x = data[:,0]
+    y = data[:,1]
+    # initial C as min(y)
+    C = np.min(y)
+    y_adj = y - C
+    mask = y_adj > 0
+    if np.count_nonzero(mask) < 2:
+        # Insufficient variation: constant model
+        A, B, R2 = 0.0, 0.0, 1.0
+    else:
+        x_fit = x[mask]
+        y_fit = y_adj[mask]
+        ln_x = np.log(x_fit)
+        ln_y = np.log(y_fit)
+        B, lnA = np.polyfit(ln_x, ln_y, 1)
+        A = np.exp(lnA)
+        y_pred = A * x**B + C
+        ss_res = np.sum((y - y_pred)**2)
+        ss_tot = np.sum((y - np.mean(y))**2)
+        R2 = 1 - ss_res/ss_tot
+    coeffs[name] = (A, B, C, R2)
+
+# Display results
+print("Fitted power-law + offset models (ε=1.0, fixed, bias=True):\n")
+for name, (A, B, C, R2) in coeffs.items():
+    print(f"- {name.capitalize()}:")
+    print(f"    RMSE ≈ {A:.3f}·(storage_ratio)^{B:.3f} + {C:.3f}")
+    print(f"    R² = {R2:.3f}\n")
+
+# Plot data and fits
+plt.figure(figsize=(8,6))
+colors = {'random':'red','sinusoid':'blue','bursty':'green'}
+for name, data in frontiers.items():
+    x, y = data[:,0], data[:,1]
+    A, B, C, _ = coeffs[name]
+    x_line = np.linspace(min(x), max(x), 100)
+    y_line = A * x_line**B + C
+    plt.scatter(x, y, color=colors[name], label=f'{name} data')
+    plt.plot(x_line, y_line, color=colors[name], linestyle='--', label=f'{name} fit')
+plt.xlabel('Storage Ratio')
+plt.ylabel('RMSE')
+plt.title('Power-law + Offset Fit to Storage–RMSE Frontier')
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()

@@ -1,0 +1,1 @@
+NN[C@@H](CS)CN[C@@H](CS)CN[C@@H](C)CN[C@@H](CS)CN[C@@H](C)CNCCNCCN[C@@H](CS)CN[C@@H](C)CN[C@@H](C(O)C)CNCCNCCN[C@@H](CS)CN[C@@H](CS)CN[C@@H](C)CN[C@@H](C)CN[C@@H](C(O)C)CN[C@@H](C)CNCCN[C@@H](CS)CN[C@@H](C)C(=O)C(=O)O

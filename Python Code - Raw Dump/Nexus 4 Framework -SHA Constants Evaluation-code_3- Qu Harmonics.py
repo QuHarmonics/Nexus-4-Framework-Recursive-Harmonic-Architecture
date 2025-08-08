@@ -1,0 +1,1 @@
+Decomplies Hash Constatns

@@ -1,0 +1,1 @@
+Harmonic Stabilization of Chaotic Systems: A Lorenz-84 Case Study
